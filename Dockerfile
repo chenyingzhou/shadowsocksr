@@ -1,31 +1,40 @@
-FROM alpine:3.6
+FROM ubuntu:16.04
 
-ENV SERVER_ADDR     0.0.0.0
-ENV SERVER_PORT     51348
-ENV PASSWORD        psw
-ENV METHOD          aes-128-ctr
-ENV PROTOCOL        auth_aes128_md5
-ENV PROTOCOLPARAM   32
-ENV OBFS            tls1.2_ticket_auth_compatible
-ENV TIMEOUT         300
-ENV DNS_ADDR        8.8.8.8
-ENV DNS_ADDR_2      8.8.4.4
+# 安装ssr
+RUN apt-get update \
+    && apt-get install -y wget python \
+    && wget -c -O shadowsocksr.tar.gz https://github.com/chenyingzhou/shadowsocksr/archive/3.2.3.tar.gz \
+    && tar -zxf shadowsocksr.tar.gz \
+    && cd shadowsocksr-3.2.3 \
+    && ./install_local.sh \
+    && cd ../ \
+    && rm -rf shadowsocksr* \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
 
-ARG BRANCH=manyuser
-ARG WORK=~
+# 安装privoxy，用于socks5转http
+RUN apt-get update \
+    && apt-get install -y privoxy \
+    && sed -i 's/^listen-address/# listen-address/' /etc/privoxy/config \
+    && echo 'listen-address 0.0.0.0:1081' >> /etc/privoxy/config \
+    && echo 'forward-socks5t / 0.0.0.0:1080 .' >> /etc/privoxy/config \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
 
+# 编写启动脚本
+RUN { \
+        echo '#!/bin/sh'; \
+        echo 'if [ ! -f "/etc/ssr/config-local.json" ]; then'; \
+        echo '  cp /usr/local/ssr/conf/config-local.json /etc/ssr/config-local.json'; \
+        echo 'fi'; \
+        echo 'service ssrlocal start'; \
+        echo 'service privoxy start'; \
+        echo 'tail -f /dev/null'; \
+    } | tee /start.sh \
+    && chmod 755 /start.sh
 
-RUN apk --no-cache add python \
-    libsodium \
-    wget
+EXPOSE 1081
 
+VOLUME ["/etc/ssr"]
 
-RUN mkdir -p $WORK && \
-    wget -qO- --no-check-certificate https://github.com/shadowsocksr/shadowsocksr/archive/$BRANCH.tar.gz | tar -xzf - -C $WORK
-
-
-WORKDIR $WORK/shadowsocksr-$BRANCH/shadowsocks
-
-
-EXPOSE $SERVER_PORT
-CMD python server.py -p $SERVER_PORT -k $PASSWORD -m $METHOD -O $PROTOCOL -o $OBFS -G $PROTOCOLPARAM
+ENTRYPOINT ["/start.sh"]
